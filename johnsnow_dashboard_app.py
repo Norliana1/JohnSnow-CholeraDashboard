@@ -76,7 +76,6 @@ def fig_to_base64(fig, fmt="png", dpi=150):
     return base64.b64encode(buf.read()).decode("utf-8")
 
 # ---------------- Map generation (cached) ----------------
-@st.cache_data(show_spinner=False)
 def generate_kde_image(deaths_gdf, kde_n=300, kde_cmap="magma", threshold=20, tmpname="kde_temp.png"):
     # produce transparent KDE PNG (projected CRS)
     xs = deaths_gdf.geometry.x.values
