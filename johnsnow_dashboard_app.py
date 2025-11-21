@@ -239,6 +239,15 @@ def build_folium_map(deaths_gdf, pumps_gdf, sewer_gdf,
 st.set_page_config(page_title="John Snow — Cholera Dashboard", layout="wide")
 st.title("John Snow 1854 — Cholera Map Dashboard")
 
+# Top-level description / branding
+with st.expander("About this dashboard (click)"):
+    st.markdown("""
+    **Interactive spatial analysis of John Snow's 1854 cholera dataset.**
+    - Use the sidebar to tune KDE, DBSCAN, heatmap and pump influence radius.
+    - Download outputs and CSV summaries from the Export panel.
+    - Created by **Norliana Mokhtar** for GES723 John Snow Lab.
+    """)
+
 st.sidebar.header("Controls & Map Options")
 
 # Load data
