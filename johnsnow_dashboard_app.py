@@ -1,3 +1,7 @@
+"""
+johnsnow_dashboard_app.py
+"""
+
 import io
 import os
 from pathlib import Path
