@@ -352,11 +352,3 @@ st.download_button(
 
 st.markdown("---")
 st.caption("Created for GES723 John Snow Lab — interactive dashboard by Norliana Mokhtar.")
-"""
-
-# Save the corrected script as a new file for download
-corrected_script_path = '/mnt/data/Corrected_Full_Script.py'
-with open(corrected_script_path, 'w') as file:
-    file.write(corrected_script)
-
-corrected_script_path  # Return the file path for user download
