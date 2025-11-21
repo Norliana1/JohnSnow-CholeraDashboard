@@ -3,11 +3,14 @@ import io
 import os
 from pathlib import Path
 import base64
+import json
+import tempfile
+import datetime
 
 import numpy as np
 import pandas as pd
 import geopandas as gpd
-from shapely.geometry import Point
+from shapely.geometry import Point, mapping
 from scipy.stats import gaussian_kde
 from sklearn.cluster import DBSCAN
 from PIL import Image
@@ -239,15 +242,6 @@ def build_folium_map(deaths_gdf, pumps_gdf, sewer_gdf,
 st.set_page_config(page_title="John Snow — Cholera Dashboard", layout="wide")
 st.title("John Snow 1854 — Cholera Map Dashboard")
 
-# Top-level description / branding
-with st.expander("About this dashboard (click)"):
-    st.markdown("""
-    **Interactive spatial analysis of John Snow's 1854 cholera dataset.**
-    - Use the sidebar to tune KDE, DBSCAN, heatmap and pump influence radius.
-    - Download outputs and CSV summaries from the Export panel.
-    - Created by **Norliana Mokhtar** for GES723 John Snow Lab.
-    """)
-
 st.sidebar.header("Controls & Map Options")
 
 # Load data
@@ -330,3 +324,11 @@ else:
 
 st.markdown("---")
 st.caption("Created for GES723 John Snow Lab — interactive dashboard by Norliana Mokhtar.")
+"""
+
+# Save the corrected script as a new file for download
+corrected_script_path = '/mnt/data/Corrected_Full_Script.py'
+with open(corrected_script_path, 'w') as file:
+    file.write(corrected_script)
+
+corrected_script_path  # Return the file path for user download
