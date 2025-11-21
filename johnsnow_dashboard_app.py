@@ -1,4 +1,4 @@
-# johnsnow_dashboard_app.py (patched full version)
+# johnsnow_dashboard_app.py
 import io
 import os
 from pathlib import Path
@@ -80,7 +80,7 @@ def prepare_gdfs(deaths, pumps, sewer, xcol="COORD_X", ycol="COORD_Y", crs_proj=
 def build_folium_map(deaths_gdf, pumps_gdf, sewer_gdf,
                      kde_n=400, kde_cmap="magma", kde_opacity=0.75,
                      heat_radius=18, heat_blur=20,
-                     dbscan_eps=15, dbscan_min_samples=5,
+                     dbscan_eps=50, dbscan_min_samples=3,
                      show_heat=True, show_kde=True, show_clusters=True, show_pumps=True, show_sewer=False):
 
     deaths_gdf = deaths_gdf.copy()
@@ -178,7 +178,7 @@ def build_folium_map(deaths_gdf, pumps_gdf, sewer_gdf,
         deaths_gdf['cluster'] = -1
         deaths_wgs['cluster'] = -1
 
-    # Pumps popup bars (scaled)
+    # Pumps popup bars
     if show_pumps:
         pump_group = folium.FeatureGroup(name="Pumps (click for distance chart)", show=True)
         pumps_iter = pumps_gdf.reset_index(drop=True)
