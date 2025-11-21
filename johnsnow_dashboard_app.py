@@ -1,16 +1,13 @@
-# johnsnow_dashboard_app.py
+# johnsnow_dashboard_app.py (patched full version)
 import io
 import os
 from pathlib import Path
 import base64
-import json
-import tempfile
-import datetime
 
 import numpy as np
 import pandas as pd
 import geopandas as gpd
-from shapely.geometry import Point, mapping
+from shapely.geometry import Point
 from scipy.stats import gaussian_kde
 from sklearn.cluster import DBSCAN
 from PIL import Image
@@ -300,7 +297,7 @@ with col2:
 
 # ---------------- Export final map ----------------
 st.markdown("---")
-st.subheader("Export final map to HTML")
+st.subheader("Export Final Map to HTML")
 html_path = FINAL_HTML_PATH
 
 if st.button("Save final map as HTML"):
@@ -321,34 +318,6 @@ if html_path.exists():
         )
 else:
     st.info("Final HTML not found. Click 'Save final map as HTML' to create it.")
-
-# ---------------- Export Data as CSV ----------------
-st.markdown("---")
-st.subheader("Export Data")
-st.write("You can download the summary data and CSV files below:")
-
-# Prepare your data (you can modify this depending on what summary data you want to export)
-deaths_summary = deaths_gdf[['ID', 'COORD_X', 'COORD_Y', 'cluster']]  # Adjust this based on your dataset's columns
-pumps_summary = pumps_gdf[['ID', 'COORD_X', 'COORD_Y']]  # Adjust accordingly
-
-# Convert DataFrames to CSV
-deaths_csv = deaths_summary.to_csv(index=False)
-pumps_csv = pumps_summary.to_csv(index=False)
-
-# Provide download buttons for the user to download CSV files
-st.download_button(
-    label="Download Deaths Summary CSV",
-    data=deaths_csv,
-    file_name="deaths_summary.csv",
-    mime="text/csv"
-)
-
-st.download_button(
-    label="Download Pumps Summary CSV",
-    data=pumps_csv,
-    file_name="pumps_summary.csv",
-    mime="text/csv"
-)
 
 st.markdown("---")
 st.caption("Created for GES723 John Snow Lab — interactive dashboard by Norliana Mokhtar.")
