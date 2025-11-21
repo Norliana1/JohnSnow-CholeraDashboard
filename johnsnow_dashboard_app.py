@@ -302,31 +302,33 @@ with col2:
     except Exception:
         st.write("- not computed")
 
-    # --- EXPORT FINAL MAP TO HTML ---
-st.write("### Export Final Map to HTML")
+st.markdown("---")
+st.subheader("Export Final Map to HTML")
 
-# Create Outputs folder if needed
-os.makedirs("Outputs", exist_ok=True)
+# Use FINAL_HTML_PATH declared earlier (OUT_DIR / "final_cholera_map.html")
+html_path = FINAL_HTML_PATH
 
-html_path = "Outputs/final_cholera_map.html"
-final_map.save(html_path)
+# Save only when user clicks button (prevents NameError on startup)
+if st.button("Save final map as HTML"):
+    try:
+        # 'm' is the folium map created earlier by build_folium_map(...)
+        m.save(str(html_path))
+        st.success(f"Final map saved to: {html_path}")
+    except Exception as e:
+        st.error(f"Error while saving final map: {e}")
 
-with open(html_path, "rb") as f:
-    st.download_button(
-        label="📥 Download Final Cholera Map (HTML)",
-        data=f,
-        file_name="final_cholera_map.html",
-        mime="text/html"
-    )
-    
-    st.markdown("---")
-    st.write("Download map HTML (final output if exists):")
-    if FINAL_HTML_PATH.exists():
-        with open(FINAL_HTML_PATH, "rb") as fh:
-            data = fh.read()
-            st.download_button("Download final_cholera_map.html", data, file_name=FINAL_HTML_PATH.name, mime="text/html")
-    else:
-        st.info("Final HTML not found. Use 'Regenerate map' to produce a fresh HTML file from this dashboard (feature coming).")
+# Show download button if file exists
+if html_path.exists():
+    with open(html_path, "rb") as fh:
+        html_bytes = fh.read()
+        st.download_button(
+            label="📥 Download Final Cholera Map (HTML)",
+            data=html_bytes,
+            file_name=html_path.name,
+            mime="text/html"
+        )
+else:
+    st.info("Final HTML not found. Click 'Save final map as HTML' to create it.")
 
 st.markdown("---")
 st.caption("Created for GES723 John Snow Lab — interactive dashboard by Norliana Mokhtar.")
