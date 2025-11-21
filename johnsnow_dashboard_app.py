@@ -1,4 +1,4 @@
-# johnsnow_dashboard_app.py (patched for Streamlit Cloud)
+# johnsnow_dashboard_app.py
 import io
 import os
 from pathlib import Path
@@ -22,14 +22,14 @@ import matplotlib.colors as mcolors
 import streamlit as st
 from streamlit_folium import st_folium
 
-# ---------------- PATHS: use relative paths so Streamlit Cloud works ----------------
+# ---------------- PATHS ----------------
 DATA_DIR = Path("data")
 OUT_DIR  = Path("Outputs")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 FINAL_HTML_PATH = OUT_DIR / "final_cholera_map.html"
 
-# ---------------- Helpers: load & cache ----------------
+# ---------------- Helpers ----------------
 @st.cache_data(show_spinner=False)
 def load_csv_safe(fp: Path):
     if not fp.exists():
@@ -43,14 +43,13 @@ def load_data():
     sewer  = load_csv_safe(DATA_DIR / "sewergrates_ventilators.csv")
     return deaths, pumps, sewer
 
-# Create GeoDataFrames in projected CRS (force numeric x/y)
 @st.cache_data(show_spinner=False)
 def prepare_gdfs(deaths, pumps, sewer, xcol="COORD_X", ycol="COORD_Y", crs_proj="EPSG:27700"):
     # ensure columns exist
     for df, name in [(deaths, "deaths"), (pumps, "pumps"), (sewer, "sewer")]:
         if xcol not in df.columns or ycol not in df.columns:
             raise KeyError(f"Expected columns '{xcol}' and '{ycol}' in {name} csv.")
-    # coerce to numeric (avoid strings)
+    # coerce to numeric
     deaths = deaths.copy()
     pumps  = pumps.copy()
     sewer  = sewer.copy()
@@ -61,7 +60,7 @@ def prepare_gdfs(deaths, pumps, sewer, xcol="COORD_X", ycol="COORD_Y", crs_proj=
     sewer[xcol]  = pd.to_numeric(sewer[xcol], errors="coerce")
     sewer[ycol]  = pd.to_numeric(sewer[ycol], errors="coerce")
 
-    # drop rows without coords to avoid downstream crashes
+    # drop rows without coords
     deaths = deaths.dropna(subset=[xcol, ycol]).reset_index(drop=True)
     pumps  = pumps.dropna(subset=[xcol, ycol]).reset_index(drop=True)
     sewer  = sewer.dropna(subset=[xcol, ycol]).reset_index(drop=True)
@@ -77,14 +76,13 @@ def prepare_gdfs(deaths, pumps, sewer, xcol="COORD_X", ycol="COORD_Y", crs_proj=
                                   crs=crs_proj)
     return deaths_gdf, pumps_gdf, sewer_gdf
 
-# Build folium map dynamically based on control params
+# ---------------- Build folium map ----------------
 def build_folium_map(deaths_gdf, pumps_gdf, sewer_gdf,
                      kde_n=400, kde_cmap="magma", kde_opacity=0.75,
                      heat_radius=18, heat_blur=20,
                      dbscan_eps=15, dbscan_min_samples=5,
                      show_heat=True, show_kde=True, show_clusters=True, show_pumps=True, show_sewer=False):
 
-    # operate on copies to avoid mutating cached objects
     deaths_gdf = deaths_gdf.copy()
     pumps_gdf = pumps_gdf.copy()
     sewer_gdf = sewer_gdf.copy()
@@ -100,7 +98,7 @@ def build_folium_map(deaths_gdf, pumps_gdf, sewer_gdf,
     grid_coords = np.vstack([xx.ravel(), yy.ravel()])
     zz = kde_vals(grid_coords).reshape(xx.shape)
 
-    # Save temporary KDE raster (transparent background)
+    # KDE raster
     fig, ax = plt.subplots(figsize=(8,8), dpi=150)
     ax.imshow(np.rot90(zz), cmap=kde_cmap, extent=[xmin, xmax, ymin, ymax], alpha=1.0)
     ax.axis('off')
@@ -109,7 +107,6 @@ def build_folium_map(deaths_gdf, pumps_gdf, sewer_gdf,
     fig.savefig(tmp_kde_png, dpi=150, bbox_inches='tight', pad_inches=0)
     plt.close(fig)
 
-    # make dark background transparent
     img_pil = Image.open(tmp_kde_png).convert("RGBA")
     arr = np.array(img_pil)
     threshold = 20
@@ -125,19 +122,15 @@ def build_folium_map(deaths_gdf, pumps_gdf, sewer_gdf,
     min_lat = float(corners.geometry.y.min()); max_lat = float(corners.geometry.y.max())
     overlay_bounds = [[min_lat, min_lon], [max_lat, max_lon]]
 
-    # Prepare WGS points
     deaths_wgs = deaths_gdf.to_crs(epsg=4326)
     pumps_wgs = pumps_gdf.to_crs(epsg=4326)
     sewer_wgs = sewer_gdf.to_crs(epsg=4326)
 
-    # Heat data (lat, lon, weight)
     heat_data = [[row.geometry.y, row.geometry.x, 1] for _, row in deaths_wgs.iterrows()]
 
-    # Prepare map center
     center = [float(deaths_wgs.geometry.y.mean()), float(deaths_wgs.geometry.x.mean())]
     m = folium.Map(location=center, zoom_start=16, tiles="CartoDB positron")
 
-    # Add KDE raster overlay if desired
     if show_kde:
         folium.raster_layers.ImageOverlay(
             name="KDE raster (smooth)",
@@ -149,15 +142,14 @@ def build_folium_map(deaths_gdf, pumps_gdf, sewer_gdf,
             zindex=1
         ).add_to(m)
 
-    # Add HeatMap (point-weighted)
     if show_heat:
         heat_layer = folium.FeatureGroup(name="HeatMap (point-weighted)", show=False)
         HeatMap(heat_data, radius=heat_radius, blur=heat_blur, max_zoom=18).add_to(heat_layer)
         heat_layer.add_to(m)
 
-    # DBSCAN clustering (projected CRS)
-    if show_clusters:
-        coords_proj = np.column_stack([deaths_gdf.geometry.x, deaths_gdf.geometry.y])
+    # DBSCAN clusters
+    coords_proj = np.column_stack([deaths_gdf.geometry.x, deaths_gdf.geometry.y])
+    if show_clusters and len(coords_proj) > 0:
         db = DBSCAN(eps=dbscan_eps, min_samples=dbscan_min_samples).fit(coords_proj)
         deaths_gdf['cluster'] = db.labels_
         deaths_wgs['cluster'] = deaths_gdf['cluster'].values
@@ -179,24 +171,31 @@ def build_folium_map(deaths_gdf, pumps_gdf, sewer_gdf,
                 centroid_wgs = gpd.GeoSeries([centroid], crs=crs_proj).to_crs(epsg=4326).iloc[0]
                 folium.Marker(location=[centroid_wgs.y, centroid_wgs.x],
                               popup=f"Cluster centroid {lbl}",
-                              icon=folium.DivIcon(html=f"<div style='font-size:10px;color:black;background:rgba(255,255,255,0.85);padding:3px;border-radius:4px'>C{lbl}</div>")).add_to(m)
+                              icon=folium.DivIcon(html=f"<div style='font-size:10px;color:black;"
+                                                       f"background:rgba(255,255,255,0.85);padding:3px;"
+                                                       f"border-radius:4px'>C{lbl}</div>")).add_to(m)
     else:
         deaths_gdf['cluster'] = -1
         deaths_wgs['cluster'] = -1
 
-    # Pumps layer + popup chart (simple inline bars)
+    # Pumps popup bars (scaled)
     if show_pumps:
         pump_group = folium.FeatureGroup(name="Pumps (click for distance chart)", show=True)
         pumps_iter = pumps_gdf.reset_index(drop=True)
         pumps_wgs_reset = pumps_wgs.reset_index(drop=True)
+        MAX_BAR_HEIGHT = 50
         for pid, prow in pumps_iter.iterrows():
             dists = deaths_gdf.geometry.distance(prow.geometry)
             bins = [0, 10, 25, 50, 100, 200, np.inf]
             labels = ["0-10","10-25","25-50","50-100","100-200",">200"]
             binned = pd.cut(dists, bins=bins, labels=labels)
             summary = binned.value_counts().reindex(labels).fillna(0).astype(int)
-            bars = "".join([f"<div style='display:inline-block;width:30px;height:{max(8, int(v*6))}px;background:#4C78A8;margin-right:3px;vertical-align:bottom' title='{labels[i]}: {v}'></div>"
-                            for i,v in enumerate(summary.values)])
+            max_val = summary.values.max() if summary.values.max() > 0 else 1
+            bars = "".join([
+                f"<div style='display:inline-block;width:30px;height:{int(v/max_val*MAX_BAR_HEIGHT)}px;"
+                f"background:#4C78A8;margin-right:3px;vertical-align:bottom' title='{labels[i]}: {v}'></div>"
+                for i,v in enumerate(summary.values)
+            ])
             html = f"<div style='width:320px'><b>Pump {pid}</b><br>{bars}<br><small>bins: {', '.join(labels)}</small></div>"
             prow_wgs = pumps_wgs_reset.geometry.iloc[pid]
             folium.Marker(location=[prow_wgs.y, prow_wgs.x],
@@ -204,7 +203,7 @@ def build_folium_map(deaths_gdf, pumps_gdf, sewer_gdf,
                           icon=folium.Icon(color="darkred", icon="tint")).add_to(pump_group)
         pump_group.add_to(m)
 
-    # Sewer layer
+    # Sewer
     if show_sewer:
         sewer_group = folium.FeatureGroup(name="Sewer grates", show=False)
         for _, row in sewer_wgs.iterrows():
@@ -212,7 +211,7 @@ def build_folium_map(deaths_gdf, pumps_gdf, sewer_gdf,
                                 radius=3, color="green", fill=True, fill_opacity=0.6).add_to(sewer_group)
         sewer_group.add_to(m)
 
-    # Layer control, title, legend
+    # Layers, title, legend
     folium.LayerControl(collapsed=False).add_to(m)
     title_html = """
          <h3 align="center" style="font-size:18px">
@@ -275,9 +274,8 @@ dbscan_min = st.sidebar.slider("min_samples", 2, 10, 5, step=1)
 if st.sidebar.button("Regenerate map"):
     st.session_state["regen"] = True
 
-# Main layout: left map, right controls & stats
+# Main layout
 col1, col2 = st.columns((3,1))
-
 with col1:
     st.subheader("Interactive Map")
     with st.spinner("Generating map..."):
@@ -287,37 +285,28 @@ with col1:
                              dbscan_eps=dbscan_eps, dbscan_min_samples=dbscan_min,
                              show_heat=show_heat, show_kde=show_kde, show_clusters=show_clusters,
                              show_pumps=show_pumps, show_sewer=show_sewer)
-    # Render folium map — width must be int or None (do NOT pass "100%")
     st_folium(m, width=None, height=700)
 
 with col2:
     st.subheader("Quick statistics")
     st.write(f"Total death points: **{len(deaths_gdf)}**")
     st.write(f"Total pumps: **{len(pumps_gdf)}**")
-    st.write("DBSCAN clusters (non-noise):")
-    try:
-        labels = deaths_gdf['cluster'].unique()
-        num_clusters = int((labels >= 0).sum()) if labels.size else 0
-        st.write(f"- Number of clusters (excluding noise): **{num_clusters}**")
-    except Exception:
-        st.write("- not computed")
+    labels = deaths_gdf['cluster'].unique() if 'cluster' in deaths_gdf.columns else np.array([-1])
+    num_clusters = int((labels >= 0).sum()) if labels.size else 0
+    st.write(f"DBSCAN clusters (non-noise): **{num_clusters}**")
 
+# ---------------- Export final map ----------------
 st.markdown("---")
 st.subheader("Export Final Map to HTML")
-
-# Use FINAL_HTML_PATH declared earlier (OUT_DIR / "final_cholera_map.html")
 html_path = FINAL_HTML_PATH
 
-# Save only when user clicks button (prevents NameError on startup)
 if st.button("Save final map as HTML"):
     try:
-        # 'm' is the folium map created earlier by build_folium_map(...)
         m.save(str(html_path))
         st.success(f"Final map saved to: {html_path}")
     except Exception as e:
         st.error(f"Error while saving final map: {e}")
 
-# Show download button if file exists
 if html_path.exists():
     with open(html_path, "rb") as fh:
         html_bytes = fh.read()
