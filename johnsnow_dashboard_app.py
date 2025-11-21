@@ -289,11 +289,27 @@ with col1:
 
 with col2:
     st.subheader("Quick statistics")
-    st.write(f"Total death points: **{len(deaths_gdf)}**")
-    st.write(f"Total pumps: **{len(pumps_gdf)}**")
+
+    # Basic counts
+    total_deaths = len(deaths_gdf)
+    total_pumps = len(pumps_gdf)
+    total_sewer = len(sewer_gdf)
+
+    st.write(f"Total death points: **{total_deaths}**")
+    st.write(f"Total pumps: **{total_pumps}**")
+    st.write(f"Total sewer grates: **{total_sewer}**")
+
+    # DBSCAN clusters
     labels = deaths_gdf['cluster'].unique() if 'cluster' in deaths_gdf.columns else np.array([-1])
     num_clusters = int((labels >= 0).sum()) if labels.size else 0
     st.write(f"DBSCAN clusters (non-noise): **{num_clusters}**")
+
+    # Optional: cluster breakdown
+    if num_clusters > 0:
+        st.write("Cluster size summary:")
+        cluster_counts = deaths_gdf[deaths_gdf["cluster"] >= 0]["cluster"].value_counts().sort_index()
+        for cid, count in cluster_counts.items():
+            st.write(f"- Cluster {cid}: **{count}** deaths")
 
 # ---------------- Export final map ----------------
 st.markdown("---")
