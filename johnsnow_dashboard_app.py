@@ -1,11 +1,3 @@
-"""
-johnsnow_dashboard_app.py
-Advanced Streamlit dashboard for John Snow 1854 Cholera Map (Option C).
-- KDE raster overlay, HeatMap, DBSCAN clusters.
-- Sidebar controls for KDE opacity, heat radius/blur, DBSCAN eps/min_samples, layer toggles.
-- Buttons to regenerate map and to download the final HTML file.
-"""
-
 import io
 import os
 from pathlib import Path
