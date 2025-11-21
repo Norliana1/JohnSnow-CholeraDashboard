@@ -1,11 +1,4 @@
-"""
-johnsnow_dashboard_app.py
-Advanced Streamlit dashboard for John Snow 1854 Cholera Map.
-- KDE raster overlay, HeatMap, DBSCAN clusters.
-- Sidebar controls for KDE opacity, heat radius/blur, DBSCAN eps/min_samples, layer toggles.
-- Buttons to regenerate map and to download the final HTML file.
-"""
-
+# johnsnow_dashboard_app.py (patched for Streamlit Cloud)
 import io
 import os
 from pathlib import Path
@@ -30,44 +23,56 @@ import streamlit as st
 from streamlit_folium import st_folium
 
 # ---------------- PATHS: use relative paths so Streamlit Cloud works ----------------
-# Repo must contain a folder named exactly "data" (lowercase)
 DATA_DIR = Path("data")
 OUT_DIR  = Path("Outputs")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# default final html (if you previously generated it)
 FINAL_HTML_PATH = OUT_DIR / "final_cholera_map_polished.html"
 
 # ---------------- Helpers: load & cache ----------------
 @st.cache_data(show_spinner=False)
 def load_csv_safe(fp: Path):
-    # lightweight check, raise clear error if missing
     if not fp.exists():
         raise FileNotFoundError(f"Required file not found: {fp}")
     return pd.read_csv(fp)
 
 @st.cache_data(show_spinner=False)
 def load_data():
-    # filenames expected in repo/data/
     deaths = load_csv_safe(DATA_DIR / "deaths_by_bldg.csv")
     pumps  = load_csv_safe(DATA_DIR / "pumps.csv")
     sewer  = load_csv_safe(DATA_DIR / "sewergrates_ventilators.csv")
     return deaths, pumps, sewer
 
-# Create GeoDataFrames in projected CRS
+# Create GeoDataFrames in projected CRS (force numeric x/y)
 @st.cache_data(show_spinner=False)
 def prepare_gdfs(deaths, pumps, sewer, xcol="COORD_X", ycol="COORD_Y", crs_proj="EPSG:27700"):
-    # make sure columns exist
+    # ensure columns exist
     for df, name in [(deaths, "deaths"), (pumps, "pumps"), (sewer, "sewer")]:
         if xcol not in df.columns or ycol not in df.columns:
             raise KeyError(f"Expected columns '{xcol}' and '{ycol}' in {name} csv.")
-    deaths_gdf = gpd.GeoDataFrame(deaths.copy(),
+    # coerce to numeric (avoid strings)
+    deaths = deaths.copy()
+    pumps  = pumps.copy()
+    sewer  = sewer.copy()
+    deaths[xcol] = pd.to_numeric(deaths[xcol], errors="coerce")
+    deaths[ycol] = pd.to_numeric(deaths[ycol], errors="coerce")
+    pumps[xcol]  = pd.to_numeric(pumps[xcol], errors="coerce")
+    pumps[ycol]  = pd.to_numeric(pumps[ycol], errors="coerce")
+    sewer[xcol]  = pd.to_numeric(sewer[xcol], errors="coerce")
+    sewer[ycol]  = pd.to_numeric(sewer[ycol], errors="coerce")
+
+    # drop rows without coords to avoid downstream crashes
+    deaths = deaths.dropna(subset=[xcol, ycol]).reset_index(drop=True)
+    pumps  = pumps.dropna(subset=[xcol, ycol]).reset_index(drop=True)
+    sewer  = sewer.dropna(subset=[xcol, ycol]).reset_index(drop=True)
+
+    deaths_gdf = gpd.GeoDataFrame(deaths,
                                   geometry=gpd.points_from_xy(deaths[xcol], deaths[ycol]),
                                   crs=crs_proj)
-    pumps_gdf = gpd.GeoDataFrame(pumps.copy(),
+    pumps_gdf = gpd.GeoDataFrame(pumps,
                                   geometry=gpd.points_from_xy(pumps[xcol], pumps[ycol]),
                                   crs=crs_proj)
-    sewer_gdf = gpd.GeoDataFrame(sewer.copy(),
+    sewer_gdf = gpd.GeoDataFrame(sewer,
                                   geometry=gpd.points_from_xy(sewer[xcol], sewer[ycol]),
                                   crs=crs_proj)
     return deaths_gdf, pumps_gdf, sewer_gdf
@@ -78,7 +83,12 @@ def build_folium_map(deaths_gdf, pumps_gdf, sewer_gdf,
                      heat_radius=18, heat_blur=20,
                      dbscan_eps=15, dbscan_min_samples=5,
                      show_heat=True, show_kde=True, show_clusters=True, show_pumps=True, show_sewer=False):
-    # Projected CRS (EPSG:27700) assumed for dataset
+
+    # operate on copies to avoid mutating cached objects
+    deaths_gdf = deaths_gdf.copy()
+    pumps_gdf = pumps_gdf.copy()
+    sewer_gdf = sewer_gdf.copy()
+
     crs_proj = deaths_gdf.crs
     xs = deaths_gdf.geometry.x.values
     ys = deaths_gdf.geometry.y.values
@@ -86,12 +96,11 @@ def build_folium_map(deaths_gdf, pumps_gdf, sewer_gdf,
     kde_vals = gaussian_kde(coords)
 
     xmin, ymin, xmax, ymax = deaths_gdf.total_bounds
-    # grid
     xx, yy = np.mgrid[xmin:xmax:kde_n*1j, ymin:ymax:kde_n*1j]
     grid_coords = np.vstack([xx.ravel(), yy.ravel()])
     zz = kde_vals(grid_coords).reshape(xx.shape)
 
-    # Save temporary KDE raster (transparent)
+    # Save temporary KDE raster (transparent background)
     fig, ax = plt.subplots(figsize=(8,8), dpi=150)
     ax.imshow(np.rot90(zz), cmap=kde_cmap, extent=[xmin, xmax, ymin, ymax], alpha=1.0)
     ax.axis('off')
@@ -121,7 +130,7 @@ def build_folium_map(deaths_gdf, pumps_gdf, sewer_gdf,
     pumps_wgs = pumps_gdf.to_crs(epsg=4326)
     sewer_wgs = sewer_gdf.to_crs(epsg=4326)
 
-    # Heat data
+    # Heat data (lat, lon, weight)
     heat_data = [[row.geometry.y, row.geometry.x, 1] for _, row in deaths_wgs.iterrows()]
 
     # Prepare map center
@@ -157,7 +166,8 @@ def build_folium_map(deaths_gdf, pumps_gdf, sewer_gdf,
         for _, row in deaths_wgs.iterrows():
             lbl = int(row.get("cluster", -1))
             if lbl != -1:
-                color = mcolors.to_hex(cmap(lbl % 10)[:3])
+                rgba = cmap(lbl % 10)
+                color = mcolors.to_hex(rgba[:3])
                 folium.CircleMarker(location=[row.geometry.y, row.geometry.x],
                                     radius=5, color=color, fill=True, fill_opacity=0.85,
                                     popup=f"Cluster: {lbl}").add_to(m)
@@ -171,7 +181,6 @@ def build_folium_map(deaths_gdf, pumps_gdf, sewer_gdf,
                               popup=f"Cluster centroid {lbl}",
                               icon=folium.DivIcon(html=f"<div style='font-size:10px;color:black;background:rgba(255,255,255,0.85);padding:3px;border-radius:4px'>C{lbl}</div>")).add_to(m)
     else:
-        # ensure column exists even if clustering not shown
         deaths_gdf['cluster'] = -1
         deaths_wgs['cluster'] = -1
 
@@ -203,10 +212,8 @@ def build_folium_map(deaths_gdf, pumps_gdf, sewer_gdf,
                                 radius=3, color="green", fill=True, fill_opacity=0.6).add_to(sewer_group)
         sewer_group.add_to(m)
 
-    # Layer control
+    # Layer control, title, legend
     folium.LayerControl(collapsed=False).add_to(m)
-
-    # Title + legend
     title_html = """
          <h3 align="center" style="font-size:18px">
              <b>Cholera Outbreak Analysis — Density, Clusters & Distance Patterns</b>
@@ -280,8 +287,8 @@ with col1:
                              dbscan_eps=dbscan_eps, dbscan_min_samples=dbscan_min,
                              show_heat=show_heat, show_kde=show_kde, show_clusters=show_clusters,
                              show_pumps=show_pumps, show_sewer=show_sewer)
-    # Render folium map
-    st_folium(m, width="100%", height=700)
+    # Render folium map — width must be int or None (do NOT pass "100%")
+    st_folium(m, width=None, height=700)
 
 with col2:
     st.subheader("Quick statistics")
