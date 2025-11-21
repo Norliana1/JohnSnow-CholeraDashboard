@@ -27,7 +27,7 @@ DATA_DIR = Path("data")
 OUT_DIR  = Path("Outputs")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-FINAL_HTML_PATH = OUT_DIR / "final_cholera_map_polished.html"
+FINAL_HTML_PATH = OUT_DIR / "final_cholera_map.html"
 
 # ---------------- Helpers: load & cache ----------------
 @st.cache_data(show_spinner=False)
@@ -238,7 +238,7 @@ def build_folium_map(deaths_gdf, pumps_gdf, sewer_gdf,
 
 # ---------------- Streamlit UI ----------------
 st.set_page_config(page_title="John Snow — Cholera Dashboard", layout="wide")
-st.title("John Snow 1854 — Cholera Map Dashboard (Advanced)")
+st.title("John Snow 1854 — Cholera Map Dashboard")
 
 st.sidebar.header("Controls & Map Options")
 
@@ -302,12 +302,29 @@ with col2:
     except Exception:
         st.write("- not computed")
 
+    # --- EXPORT FINAL MAP TO HTML ---
+st.write("### Export Final Map to HTML")
+
+# Create Outputs folder if needed
+os.makedirs("Outputs", exist_ok=True)
+
+html_path = "Outputs/final_cholera_map.html"
+final_map.save(html_path)
+
+with open(html_path, "rb") as f:
+    st.download_button(
+        label="📥 Download Final Cholera Map (HTML)",
+        data=f,
+        file_name="final_cholera_map.html",
+        mime="text/html"
+    )
+    
     st.markdown("---")
-    st.write("Download map HTML (final polished output if exists):")
+    st.write("Download map HTML (final output if exists):")
     if FINAL_HTML_PATH.exists():
         with open(FINAL_HTML_PATH, "rb") as fh:
             data = fh.read()
-            st.download_button("Download final_cholera_map_polished.html", data, file_name=FINAL_HTML_PATH.name, mime="text/html")
+            st.download_button("Download final_cholera_map.html", data, file_name=FINAL_HTML_PATH.name, mime="text/html")
     else:
         st.info("Final HTML not found. Use 'Regenerate map' to produce a fresh HTML file from this dashboard (feature coming).")
 
