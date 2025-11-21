@@ -24,294 +24,267 @@ import folium
 from folium.plugins import HeatMap, MarkerCluster
 from PIL import Image
 import matplotlib.colors as mcolors
-import streamlit as st
-from streamlit_folium import st_folium
 
 # ---------------- Paths ----------------
-data_dir = Path("data")  # Sesuaikan jika perlu
-out_dir  = Path("Outputs")  # Pastikan folder ini wujud
+data_dir = Path(r"C:\Users\Admin\Downloads\MASTER\DR ERAN\Assignment JohnSnowLab\Data")
+out_dir  = Path(r"C:\Users\Admin\Outputs")
 out_dir.mkdir(parents=True, exist_ok=True)
 
 # ---------------- Load CSVs ----------------
-@st.cache_data(show_spinner=False)
-def load_csv_safe(fp: Path):
-    if not fp.exists():
-        raise FileNotFoundError(f"Required file not found: {fp}")
-    return pd.read_csv(fp)
+deaths = pd.read_csv(data_dir / "deaths_by_bldg.csv")
+pumps  = pd.read_csv(data_dir / "pumps.csv")
+sewer  = pd.read_csv(data_dir / "sewergrates_ventilators.csv")
 
-@st.cache_data(show_spinner=False)
-def load_data():
-    deaths = load_csv_safe(data_dir / "deaths_by_bldg.csv")
-    pumps  = load_csv_safe(data_dir / "pumps.csv")
-    sewer  = load_csv_safe(data_dir / "sewergrates_ventilators.csv")
-    return deaths, pumps, sewer
+# Columns (adjust if your column names differ)
+xcol = "COORD_X"
+ycol = "COORD_Y"
+count_col = "deaths" if "deaths" in deaths.columns else None
 
-# ---------------- Create GeoDataFrames ----------------
-def prepare_gdfs(deaths, pumps, sewer, xcol="COORD_X", ycol="COORD_Y", crs_proj="EPSG:27700"):
-    for df, name in [(deaths, "deaths"), (pumps, "pumps"), (sewer, "sewer")]:
-        if xcol not in df.columns or ycol not in df.columns:
-            raise KeyError(f"Expected columns '{xcol}' and '{ycol}' in {name} csv.")
-    deaths = deaths.copy()
-    pumps  = pumps.copy()
-    sewer  = sewer.copy()
-    deaths[xcol] = pd.to_numeric(deaths[xcol], errors="coerce")
-    deaths[ycol] = pd.to_numeric(deaths[ycol], errors="coerce")
-    pumps[xcol]  = pd.to_numeric(pumps[xcol], errors="coerce")
-    pumps[ycol]  = pd.to_numeric(pumps[ycol], errors="coerce")
-    sewer[xcol]  = pd.to_numeric(sewer[xcol], errors="coerce")
-    sewer[ycol]  = pd.to_numeric(sewer[ycol], errors="coerce")
+# ---------------- Create GeoDataFrames (projected CRS: EPSG:27700) ----------------
+crs_proj = "EPSG:27700"
+deaths_gdf = gpd.GeoDataFrame(deaths.copy(),
+                              geometry=gpd.points_from_xy(deaths[xcol], deaths[ycol]),
+                              crs=crs_proj)
+pumps_gdf  = gpd.GeoDataFrame(pumps.copy(),
+                              geometry=gpd.points_from_xy(pumps[xcol], pumps[ycol]),
+                              crs=crs_proj)
+sewer_gdf  = gpd.GeoDataFrame(sewer.copy(),
+                              geometry=gpd.points_from_xy(sewer[xcol], sewer[ycol]),
+                              crs=crs_proj)
 
-    deaths = deaths.dropna(subset=[xcol, ycol]).reset_index(drop=True)
-    pumps  = pumps.dropna(subset=[xcol, ycol]).reset_index(drop=True)
-    sewer  = sewer.dropna(subset=[xcol, ycol]).reset_index(drop=True)
+# ---------------- KDE (projected CRS) - resolution (tune if slow) ----------------
+xs = deaths_gdf.geometry.x.values
+ys = deaths_gdf.geometry.y.values
+coords = np.vstack([xs, ys])
+kde = gaussian_kde(coords)
 
-    deaths_gdf = gpd.GeoDataFrame(deaths, geometry=gpd.points_from_xy(deaths[xcol], deaths[ycol]), crs=crs_proj)
-    pumps_gdf = gpd.GeoDataFrame(pumps, geometry=gpd.points_from_xy(pumps[xcol], pumps[ycol]), crs=crs_proj)
-    sewer_gdf = gpd.GeoDataFrame(sewer, geometry=gpd.points_from_xy(sewer[xcol], sewer[ycol]), crs=crs_proj)
-    return deaths_gdf, pumps_gdf, sewer_gdf
+xmin, ymin, xmax, ymax = deaths_gdf.total_bounds
+# WARNING: larger kde_n -> higher resolution and memory/time cost
+kde_n = 400   # set to 700 if your machine can handle it; otherwise 300-400 recommended
+xx, yy = np.mgrid[xmin:xmax:kde_n*1j, ymin:ymax:kde_n*1j]
+grid_coords = np.vstack([xx.ravel(), yy.ravel()])
+zz = kde(grid_coords).reshape(xx.shape)
 
-# ---------------- Build Folium Map ----------------
-def build_folium_map(deaths_gdf, pumps_gdf, sewer_gdf,
-                     kde_n=400, kde_cmap="magma", kde_opacity=0.75,
-                     heat_radius=18, heat_blur=20,
-                     dbscan_eps=15, dbscan_min_samples=5,
-                     show_heat=True, show_kde=True, show_clusters=True, show_pumps=True, show_sewer=False):
-    
-    deaths_gdf = deaths_gdf.copy()
-    pumps_gdf = pumps_gdf.copy()
-    sewer_gdf = sewer_gdf.copy()
+# Save KDE raster (hot colormap) and then make dark pixels transparent
+fig, ax = plt.subplots(figsize=(10,10), dpi=150)
+ax.imshow(np.rot90(zz), cmap="magma", extent=[xmin, xmax, ymin, ymax], alpha=0.95)
+ax.axis('off')
+plt.tight_layout(pad=0)
+kde_png = out_dir / "kde_raster_polished.png"
+fig.savefig(kde_png, dpi=150, bbox_inches='tight', pad_inches=0)
+plt.close(fig)
 
-    crs_proj = deaths_gdf.crs
-    xs = deaths_gdf.geometry.x.values
-    ys = deaths_gdf.geometry.y.values
-    coords = np.vstack([xs, ys])
-    kde_vals = gaussian_kde(coords)
+# Make dark pixels transparent to allow basemap/points to show through
+img_pil = Image.open(kde_png).convert("RGBA")
+arr = np.array(img_pil)
 
-    xmin, ymin, xmax, ymax = deaths_gdf.total_bounds
-    xx, yy = np.mgrid[xmin:xmax:kde_n*1j, ymin:ymax:kde_n*1j]
-    grid_coords = np.vstack([xx.ravel(), yy.ravel()])
-    zz = kde_vals(grid_coords).reshape(xx.shape)
+# If the array is grayscale, convert it to RGBA (adding alpha channel)
+if len(arr.shape) == 2:  # grayscale image
+    arr = np.stack([arr] * 3, axis=-1)  # Convert grayscale to RGB by repeating the single channel
+    arr = np.concatenate([arr, np.full_like(arr[:, :, :1], 255)], axis=-1)  # Add an alpha channel (fully opaque)
+elif arr.shape[2] == 3:  # RGB image
+    arr = np.concatenate([arr, np.full_like(arr[:, :, :1], 255)], axis=-1)  # Add an alpha channel (fully opaque)
 
-    # KDE raster
-    fig, ax = plt.subplots(figsize=(8,8), dpi=150)
-    ax.imshow(np.rot90(zz), cmap=kde_cmap, extent=[xmin, xmax, ymin, ymax], alpha=1.0)
-    ax.axis('off')
-    plt.tight_layout(pad=0)
-    tmp_kde_png = out_dir / "tmp_kde.png"
-    fig.savefig(tmp_kde_png, dpi=150, bbox_inches='tight', pad_inches=0)
-    plt.close(fig)
+# Save the new transparent image
+img_pil2 = Image.fromarray(arr)
+kde_png_trans = out_dir / "kde_raster_transparent_polished.png"
+img_pil2.save(kde_png_trans)
 
-    img_pil = Image.open(tmp_kde_png).convert("RGBA")
-    arr = np.array(img_pil)
-    threshold = 20
-    mask = (arr[:,:,0] < threshold) & (arr[:,:,1] < threshold) & (arr[:,:,2] < threshold)
-    arr[mask,3] = 0
-    img_pil2 = Image.fromarray(arr)
-    kde_png_trans = out_dir / "tmp_kde_trans.png"
-    img_pil2.save(kde_png_trans)
+print("Saved KDE raster (transparent):", kde_png_trans)
 
-    # Convert bounds to WGS84
-    corners = gpd.GeoSeries([Point(xmin, ymin), Point(xmax, ymax)], crs=crs_proj).to_crs(epsg=4326)
-    min_lon = float(corners.geometry.x.min()); max_lon = float(corners.geometry.x.max())
-    min_lat = float(corners.geometry.y.min()); max_lat = float(corners.geometry.y.max())
-    overlay_bounds = [[min_lat, min_lon], [max_lat, max_lon]]
+# ---------------- Transform bounds to EPSG:4326 for ImageOverlay ----------------
+corners = gpd.GeoSeries([Point(xmin, ymin), Point(xmax, ymax)], crs=crs_proj)
+corners_wgs = corners.to_crs(epsg=4326)
+min_lon = float(corners_wgs.geometry.x.min())
+max_lon = float(corners_wgs.geometry.x.max())
+min_lat = float(corners_wgs.geometry.y.min())
+max_lat = float(corners_wgs.geometry.y.max())
+overlay_bounds = [[min_lat, min_lon], [max_lat, max_lon]]
 
-    deaths_wgs = deaths_gdf.to_crs(epsg=4326)
-    pumps_wgs = pumps_gdf.to_crs(epsg=4326)
-    sewer_wgs = sewer_gdf.to_crs(epsg=4326)
+# ---------------- WGS84 points for folium layers ----------------
+deaths_wgs = deaths_gdf.to_crs(epsg=4326)
+pumps_wgs  = pumps_gdf.to_crs(epsg=4326)
+sewer_wgs  = sewer_gdf.to_crs(epsg=4326)
 
+# Heat data (weighted if death count column exists)
+if count_col:
+    heat_data = [[row.geometry.y, row.geometry.x, float(row[count_col])] for _, row in deaths_wgs.iterrows()]
+else:
     heat_data = [[row.geometry.y, row.geometry.x, 1] for _, row in deaths_wgs.iterrows()]
 
-    center = [float(deaths_wgs.geometry.y.mean()), float(deaths_wgs.geometry.x.mean())]
-    m = folium.Map(location=center, zoom_start=16, tiles="CartoDB positron")
+# ---------------- DBSCAN clustering (projected CRS) ----------------
+coords_proj = np.column_stack([deaths_gdf.geometry.x, deaths_gdf.geometry.y])
+db = DBSCAN(eps=15, min_samples=5).fit(coords_proj)   # eps in meters
+deaths_gdf['cluster'] = db.labels_
+deaths_wgs['cluster'] = deaths_gdf['cluster'].values
 
-    if show_kde:
-        folium.raster_layers.ImageOverlay(
-            name="KDE raster (smooth)",
-            image=str(kde_png_trans),
-            bounds=overlay_bounds,
-            opacity=kde_opacity,
-            interactive=True,
-            cross_origin=False,
-            zindex=1
-        ).add_to(m)
+# ---------------- Prepare color map for clusters (compatible method) ----------------
+unique_labels = sorted([l for l in np.unique(db.labels_) if l != -1])
+# get base colormap (compatible across matplotlib versions)
+try:
+    base_cmap = matplotlib.colormaps.get_cmap("tab10")
+except Exception:
+    base_cmap = plt.get_cmap("tab10")
+num_colors = max(3, len(unique_labels))
+colors = [base_cmap(i / num_colors) for i in range(num_colors)]
+cluster_color_map = {}
+for i, label in enumerate(unique_labels):
+    rgb = colors[i][:3]
+    cluster_color_map[label] = mcolors.to_hex(rgb)
 
-    if show_heat:
-        heat_layer = folium.FeatureGroup(name="HeatMap (point-weighted)", show=False)
-        HeatMap(heat_data, radius=heat_radius, blur=heat_blur, max_zoom=18).add_to(heat_layer)
-        heat_layer.add_to(m)
+# ---------------- Precompute distance bins per pump (popup chart) ----------------
+pump_popups = {}
+pumps_iter = pumps_gdf.reset_index(drop=True)
+for pid, prow in pumps_iter.iterrows():
+    dists = deaths_gdf.geometry.distance(prow.geometry)  # meters
+    bins = [0, 10, 25, 50, 100, 200, np.inf]
+    labels = ["0-10","10-25","25-50","50-100","100-200",">200"]
+    binned = pd.cut(dists, bins=bins, labels=labels)
+    summary = binned.value_counts().reindex(labels).fillna(0).astype(int)
+    # create compact bar chart image
+    fig, ax = plt.subplots(figsize=(4,2.2))
+    ax.bar(summary.index.astype(str), summary.values, color="#4C78A8")
+    ax.set_title(f"Deaths by distance to Pump {pid}", fontsize=9)
+    ax.set_ylabel("Count", fontsize=8)
+    ax.tick_params(axis='x', labelrotation=45, labelsize=7)
+    ax.tick_params(axis='y', labelsize=7)
+    plt.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150)
+    plt.close(fig)
+    buf.seek(0)
+    img_b64 = base64.b64encode(buf.read()).decode("utf-8")
+    html = f'<div style="width:320px">{img_b64 and "<img src=\'data:image/png;base64," + img_b64 + "\' style=\'width:100%\'/>"}</div>'
+    pump_popups[pid] = html
 
-    # DBSCAN clusters
-    coords_proj = np.column_stack([deaths_gdf.geometry.x, deaths_gdf.geometry.y])
-    if show_clusters and len(coords_proj) > 0:
-        db = DBSCAN(eps=dbscan_eps, min_samples=dbscan_min_samples).fit(coords_proj)
-        deaths_gdf['cluster'] = db.labels_
-        deaths_wgs['cluster'] = deaths_gdf['cluster'].values
-        unique_labels = sorted([l for l in np.unique(db.labels_) if l != -1])
-        cmap = plt.get_cmap("tab10")
-        for _, row in deaths_wgs.iterrows():
-            lbl = int(row.get("cluster", -1))
-            if lbl != -1:
-                rgba = cmap(lbl % 10)
-                color = mcolors.to_hex(rgba[:3])
-                folium.CircleMarker(location=[row.geometry.y, row.geometry.x],
-                                    radius=5, color=color, fill=True, fill_opacity=0.85,
-                                    popup=f"Cluster: {lbl}").add_to(m)
-        # centroids
-        for lbl in unique_labels:
-            sub = deaths_gdf[deaths_gdf['cluster'] == lbl]
-            if not sub.empty:
+# ---------------- Build Folium map ----------------
+center = [float(deaths_wgs.geometry.y.mean()), float(deaths_wgs.geometry.x.mean())]
+m = folium.Map(location=center, zoom_start=16, tiles="CartoDB positron")
+
+# 1) Add KDE raster overlay (transparent PNG)
+folium.raster_layers.ImageOverlay(
+    name="KDE raster (smooth)",
+    image=str(kde_png_trans),
+    bounds=overlay_bounds,
+    opacity=0.75,
+    interactive=True,
+    cross_origin=False,
+    zindex=1
+).add_to(m)
+
+# 2) HeatMap (point-weighted) layer (off by default)
+heat_layer = folium.FeatureGroup(name="HeatMap (point-weighted)", show=False)
+HeatMap(heat_data, radius=18, blur=20, max_zoom=18).add_to(heat_layer)
+heat_layer.add_to(m)
+
+# 3) DBSCAN cluster layer (points + centroid markers)
+cluster_layer = folium.FeatureGroup(name="DBSCAN clusters", show=True)
+for _, row in deaths_wgs.iterrows():
+    lbl = int(row.get("cluster", -1))
+    if lbl != -1:
+        color = cluster_color_map.get(lbl, "#3186cc")
+        folium.CircleMarker(
+            location=[row.geometry.y, row.geometry.x],
+            radius=5,
+            color=color,
+            fill=True,
+            fill_opacity=0.85,
+            weight=0.5,
+            popup=f"Cluster: {lbl}"
+        ).add_to(cluster_layer)
+
+# centroids using safe union method (union_all if available)
+if len(unique_labels) > 0:
+    for lbl in unique_labels:
+        sub = deaths_gdf[deaths_gdf['cluster'] == lbl]
+        if not sub.empty:
+            try:
+                # prefer union_all (newer geopandas)
+                if hasattr(sub.geometry, "union_all"):
+                    centroid = sub.geometry.union_all().centroid
+                else:
+                    centroid = sub.geometry.unary_union.centroid
+            except Exception:
                 centroid = sub.geometry.unary_union.centroid
-                centroid_wgs = gpd.GeoSeries([centroid], crs=crs_proj).to_crs(epsg=4326).iloc[0]
-                folium.Marker(location=[centroid_wgs.y, centroid_wgs.x],
-                              popup=f"Cluster centroid {lbl}",
-                              icon=folium.DivIcon(html=f"<div style='font-size:10px;color:black;"
-                                                       f"background:rgba(255,255,255,0.85);padding:3px;"
-                                                       f"border-radius:4px'>C{lbl}</div>")).add_to(m)
-    else:
-        deaths_gdf['cluster'] = -1
-        deaths_wgs['cluster'] = -1
+            # centroid might be MultiPoint/Point - get first geometry
+            if hasattr(centroid, "geoms"):
+                centroid = list(centroid.geoms)[0]
+            centroid_wgs = gpd.GeoSeries([centroid], crs=crs_proj).to_crs(epsg=4326).iloc[0]
+            folium.Marker(
+                location=[centroid_wgs.y, centroid_wgs.x],
+                popup=f"Cluster centroid {lbl}",
+                icon=folium.DivIcon(html=f"""<div style="font-size:10px;color:black;background:rgba(255,255,255,0.85);padding:3px;border-radius:4px">C{lbl}</div>""")
+            ).add_to(cluster_layer)
 
-    # Pumps popup bars (scaled)
-    if show_pumps:
-        pump_group = folium.FeatureGroup(name="Pumps (click for distance chart)", show=True)
-        pumps_iter = pumps_gdf.reset_index(drop=True)
-        pumps_wgs_reset = pumps_wgs.reset_index(drop=True)
-        MAX_BAR_HEIGHT = 50
-        for pid, prow in pumps_iter.iterrows():
-            dists = deaths_gdf.geometry.distance(prow.geometry)
-            bins = [0, 10, 25, 50, 100, 200, np.inf]
-            labels = ["0-10","10-25","25-50","50-100","100-200",">200"]
-            binned = pd.cut(dists, bins=bins, labels=labels)
-            summary = binned.value_counts().reindex(labels).fillna(0).astype(int)
-            max_val = summary.values.max() if summary.values.max() > 0 else 1
-            bars = "".join([
-                f"<div style='display:inline-block;width:30px;height:{int(v/max_val*MAX_BAR_HEIGHT)}px;"
-                f"background:#4C78A8;margin-right:3px;vertical-align:bottom' title='{labels[i]}: {v}'></div>"
-                for i,v in enumerate(summary.values)
-            ])
-            html = f"<div style='width:320px'><b>Pump {pid}</b><br>{bars}<br><small>bins: {', '.join(labels)}</small></div>"
-            prow_wgs = pumps_wgs_reset.geometry.iloc[pid]
-            folium.Marker(location=[prow_wgs.y, prow_wgs.x],
-                          popup=folium.Popup(html, max_width=360),
-                          icon=folium.Icon(color="darkred", icon="tint")).add_to(pump_group)
-        pump_group.add_to(m)
+cluster_layer.add_to(m)
 
-    # Sewer
-    if show_sewer:
-        sewer_group = folium.FeatureGroup(name="Sewer grates", show=False)
-        for _, row in sewer_wgs.iterrows():
-            folium.CircleMarker([row.geometry.y, row.geometry.x],
-                                radius=3, color="green", fill=True, fill_opacity=0.6).add_to(sewer_group)
-        sewer_group.add_to(m)
+# 4) Pump markers + popup (with bar chart image)
+pump_layer = folium.FeatureGroup(name="Pumps (click for distance chart)", show=True)
+pumps_wgs_reset = pumps_gdf.reset_index(drop=True).to_crs(epsg=4326)
+for pid, prow in pumps_wgs_reset.iterrows():
+    popup_html = pump_popups.get(pid, "<div>No data</div>")
+    folium.Marker(
+        location=[prow.geometry.y, prow.geometry.x],
+        popup=folium.Popup(popup_html, max_width=360),
+        icon=folium.Icon(color="darkred", icon="tint")
+    ).add_to(pump_layer)
+pump_layer.add_to(m)
 
-    # Layers, title, legend
-    folium.LayerControl(collapsed=False).add_to(m)
-    title_html = """
-         <h3 align="center" style="font-size:18px">
-             <b>Cholera Outbreak Analysis — Density, Clusters & Distance Patterns</b>
-         </h3>
-         """
-    from branca.element import Element
-    m.get_root().html.add_child(Element(title_html))
+# 5) All death points via MarkerCluster for exploration (small black dots)
+mc = MarkerCluster(name="All death points (clustered)").add_to(m)
+for _, row in deaths_wgs.iterrows():
+    popup = ""
+    if "ID" in row:
+        popup += f"ID: {row['ID']}<br>"
+    if count_col:
+        popup += f"Deaths: {row[count_col]}<br>"
+    popup += f"Cluster: {row.get('cluster', '')}"
+    folium.CircleMarker([row.geometry.y, row.geometry.x],
+                        radius=3, color="black", fill=True, fill_opacity=0.65,
+                        popup=popup).add_to(mc)
 
-    legend_html = """
-    <div style="position: fixed; bottom: 60px; left: 10px; width: 240px; z-index:9999; font-size:12px;">
-      <div style="background:white; padding:10px; border-radius:6px; box-shadow:2px 2px 6px rgba(0,0,0,0.25)">
-        <b>Legend</b><br>
-        <span style="display:inline-block;width:12px;height:12px;background:rgba(180,30,20,0.75);margin-right:6px;border-radius:3px"></span> KDE hotspot<br>
-        <span style="display:inline-block;width:10px;height:10px;background:#000;margin-right:6px;border-radius:2px"></span> Death points<br>
-        <svg width="12" height="12" style="vertical-align:middle;margin-right:6px;"><polygon points="6,0 12,12 0,12" style="fill:darkred"/></svg> Pumps<br>
-      </div>
+# 6) Sewer layer (optional)
+sewer_layer = folium.FeatureGroup(name="Sewer grates", show=False)
+for _, row in sewer_wgs.iterrows():
+    folium.CircleMarker([row.geometry.y, row.geometry.x],
+                        radius=3, color="green", fill=True, fill_opacity=0.6).add_to(sewer_layer)
+sewer_layer.add_to(m)
+
+# ---------------- Custom Legend (HTML) ----------------
+legend_html = """
+<div style="
+    position: fixed;
+    bottom: 50px;
+    left: 10px;
+    width: 240px;
+    z-index:9999;
+    font-size:12px;
+    ">
+    <div style="background:white; padding:10px; border-radius:8px; box-shadow:2px 2px 8px rgba(0,0,0,0.25)">
+      <b>Legend</b><br><br>
+      <span style="display:inline-block;width:14px;height:14px;background:rgba(180,30,20,0.75);margin-right:8px;border-radius:3px"></span> KDE raster hotspot<br>
+      <span style="display:inline-block;width:10px;height:10px;background:#000;margin-right:8px;border-radius:2px"></span> Death points<br>
+      <svg width="14" height="14" style="vertical-align:middle;margin-right:6px;"><polygon points="7,0 14,14 0,14" style="fill:darkred"/></svg> Pumps<br>
+      <span style="display:inline-block;width:10px;height:10px;background:green;margin-right:8px;border-radius:2px"></span> Sewer grates<br>
+      <div style="margin-top:6px; font-size:11px; color:#555;">Toggle layers using top-right control.</div>
     </div>
-    """
-    m.get_root().html.add_child(Element(legend_html))
+</div>
+"""
+from branca.element import Element
 
-    return m
+title_html = """
+     <h3 align="center" style="font-size:20px">
+         <b>Cholera Outbreak Analysis — Density, Clusters & Distance Patterns</b>
+     </h3>
+     """
+m.get_root().html.add_child(Element(title_html))
 
-# ---------------- Streamlit UI ----------------
-st.set_page_config(page_title="John Snow — Cholera Dashboard", layout="wide")
-st.title("John Snow 1854 — Cholera Map Dashboard")
+m.get_root().html.add_child(folium.Element(legend_html))
 
-st.sidebar.header("Controls & Map Options")
+# Layer control and save
+folium.LayerControl(collapsed=False).add_to(m)
+html_out = out_dir / "final_cholera_map.html"
+m.save(str(html_out))
+print("Saved:", html_out)
 
-# Load data
-with st.spinner("Loading datasets..."):
-    deaths, pumps, sewer = load_data()
-    deaths_gdf, pumps_gdf, sewer_gdf = prepare_gdfs(deaths, pumps, sewer)
-
-# Sidebar: layer toggles
-st.sidebar.subheader("Layer toggles")
-show_kde     = st.sidebar.checkbox("Show KDE raster", value=True)
-show_heat    = st.sidebar.checkbox("Show point HeatMap", value=False)
-show_clusters= st.sidebar.checkbox("Show DBSCAN clusters", value=True)
-show_pumps   = st.sidebar.checkbox("Show Pumps (with popup charts)", value=True)
-show_sewer   = st.sidebar.checkbox("Show Sewer grates", value=False)
-
-# KDE controls
-st.sidebar.subheader("KDE settings")
-kde_n = st.sidebar.slider("KDE resolution (n)", 200, 900, 400, step=50)
-kde_opacity = st.sidebar.slider("KDE opacity", 0.0, 1.0, 0.75, step=0.05)
-kde_cmap = st.sidebar.selectbox("KDE colormap", ["magma","inferno","plasma","viridis"], index=0)
-
-# Heat settings
-st.sidebar.subheader("HeatMap settings")
-heat_radius = st.sidebar.slider("Heat radius", 6, 40, 18, step=2)
-heat_blur = st.sidebar.slider("Heat blur", 0, 40, 20, step=2)
-
-# DBSCAN settings
-st.sidebar.subheader("DBSCAN settings (meters)")
-dbscan_eps = st.sidebar.slider("eps (meters)", 5, 100, 15, step=1)
-dbscan_min = st.sidebar.slider("min_samples", 2, 10, 5, step=1)
-
-# Buttons
-if st.sidebar.button("Regenerate map"):
-    st.session_state["regen"] = True
-
-# Main layout
-col1, col2 = st.columns((3,1))
-with col1:
-    st.subheader("Interactive Map")
-    with st.spinner("Generating map..."):
-        m = build_folium_map(deaths_gdf, pumps_gdf, sewer_gdf,
-                             kde_n=kde_n, kde_cmap=kde_cmap, kde_opacity=kde_opacity,
-                             heat_radius=heat_radius, heat_blur=heat_blur,
-                             dbscan_eps=dbscan_eps, dbscan_min_samples=dbscan_min,
-                             show_heat=show_heat, show_kde=show_kde, show_clusters=show_clusters,
-                             show_pumps=show_pumps, show_sewer=show_sewer)
-    st_folium(m, width=None, height=700)
-
-with col2:
-    st.subheader("Quick statistics")
-    st.write(f"Total death points: **{len(deaths_gdf)}**")
-    st.write(f"Total pumps: **{len(pumps_gdf)}**")
-    labels = deaths_gdf['cluster'].unique() if 'cluster' in deaths_gdf.columns else np.array([-1])
-    num_clusters = int((labels >= 0).sum()) if labels.size else 0
-    st.write(f"DBSCAN clusters (non-noise): **{num_clusters}**")
-
-# ---------------- Export final map ----------------
-st.markdown("---")
-st.subheader("Export Final Map to HTML")
-html_path = out_dir / "final_cholera_map.html"
-
-if st.button("Save final map as HTML"):
-    try:
-        m.save(str(html_path))
-        st.success(f"Final map saved to: {html_path}")
-    except Exception as e:
-        st.error(f"Error while saving final map: {e}")
-
-if html_path.exists():
-    with open(html_path, "rb") as fh:
-        html_bytes = fh.read()
-        st.download_button(
-            label="📥 Download Final Cholera Map (HTML)",
-            data=html_bytes,
-            file_name=html_path.name,
-            mime="text/html"
-        )
-else:
-    st.info("Final HTML not found. Click 'Save final map as HTML' to create it.")
-
-st.markdown("---")
-st.caption("Created for GES723 John Snow Lab — interactive dashboard by Norliana Mokhtar.")
+m
