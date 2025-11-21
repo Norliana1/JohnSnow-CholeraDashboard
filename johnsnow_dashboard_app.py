@@ -258,8 +258,8 @@ def build_folium_map(deaths_gdf, pumps_gdf, sewer_gdf,
     return m, deaths_wgs, pumps_wgs
 
 # ---------------- Streamlit UI ----------------
-st.set_page_config(page_title="John Snow — Cholera Premium Dashboard", layout="wide", initial_sidebar_state="expanded")
-st.title("🗺️ John Snow 1854 — Cholera Dashboard (Premium)")
+st.set_page_config(page_title="John Snow — Cholera Dashboard", layout="wide", initial_sidebar_state="expanded")
+st.title("🗺️ John Snow 1854 — Cholera Dashboard")
 
 # Top-level description / branding
 with st.expander("About this dashboard (click)"):
