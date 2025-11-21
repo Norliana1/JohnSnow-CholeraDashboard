@@ -178,30 +178,89 @@ def build_folium_map(deaths_gdf, pumps_gdf, sewer_gdf,
         deaths_gdf['cluster'] = -1
         deaths_wgs['cluster'] = -1
 
-    # Pumps popup bars (scaled)
-    if show_pumps:
-        pump_group = folium.FeatureGroup(name="Pumps (click for distance chart)", show=True)
-        pumps_iter = pumps_gdf.reset_index(drop=True)
-        pumps_wgs_reset = pumps_wgs.reset_index(drop=True)
-        MAX_BAR_HEIGHT = 50
-        for pid, prow in pumps_iter.iterrows():
-            dists = deaths_gdf.geometry.distance(prow.geometry)
-            bins = [0, 10, 25, 50, 100, 200, np.inf]
-            labels = ["0-10","10-25","25-50","50-100","100-200",">200"]
-            binned = pd.cut(dists, bins=bins, labels=labels)
-            summary = binned.value_counts().reindex(labels).fillna(0).astype(int)
-            max_val = summary.values.max() if summary.values.max() > 0 else 1
-            bars = "".join([
-                f"<div style='display:inline-block;width:30px;height:{int(v/max_val*MAX_BAR_HEIGHT)}px;"
-                f"background:#4C78A8;margin-right:3px;vertical-align:bottom' title='{labels[i]}: {v}'></div>"
-                for i,v in enumerate(summary.values)
-            ])
-            html = f"<div style='width:320px'><b>Pump {pid}</b><br>{bars}<br><small>bins: {', '.join(labels)}</small></div>"
-            prow_wgs = pumps_wgs_reset.geometry.iloc[pid]
-            folium.Marker(location=[prow_wgs.y, prow_wgs.x],
-                          popup=folium.Popup(html, max_width=360),
-                          icon=folium.Icon(color="darkred", icon="tint")).add_to(pump_group)
-        pump_group.add_to(m)
+   # Pumps popup bars (pretty histogram version)
+if show_pumps:
+    pump_group = folium.FeatureGroup(
+        name="Pumps (click for distance chart)", 
+        show=True
+    )
+
+    pumps_iter = pumps_gdf.reset_index(drop=True)
+    pumps_wgs_reset = pumps_wgs.reset_index(drop=True)
+
+    # custom bin definition
+    bins = [0, 10, 25, 50, 100, 200, np.inf]
+    labels = ["0-10", "10-25", "25-50", "50-100", "100-200", ">200"]
+
+    MAX_BAR_HEIGHT = 70  # px
+
+    for pid, prow in pumps_iter.iterrows():
+
+        # distance from this pump to each death point
+        dists = deaths_gdf.geometry.distance(prow.geometry)
+
+        # binning
+        binned = pd.cut(dists, bins=bins, labels=labels)
+        summary = (
+            binned.value_counts()
+            .reindex(labels)
+            .fillna(0)
+            .astype(int)
+        )
+
+        max_val = summary.values.max() if summary.values.max() > 0 else 1
+
+        # build bar HTML
+        bars_html = ""
+        for val, b in zip(summary.values, labels):
+            h = int((val / max_val) * MAX_BAR_HEIGHT)
+            bars_html += f"""
+                <div style="
+                    display:inline-block;
+                    width: 28px;
+                    height:{h}px;
+                    background:#4C78A8;
+                    margin-right:6px;
+                    vertical-align:bottom;
+                    border-radius:3px;
+                " title="{b}: {val}"></div>
+            """
+
+        popup_html = f"""
+        <div style="
+            font-family:Arial, sans-serif;
+            padding:6px;
+            width:330px;
+        ">
+            <h4 style="margin:0 0 6px;">Pump {pid}</h4>
+
+            <div style="
+                padding:10px;
+                background:white;
+                border-radius:8px;
+                border:1px solid #ccc;
+                box-shadow:0 0 6px rgba(0,0,0,0.15);
+            ">
+                <div style="white-space:nowrap; overflow-x:auto;">
+                    {bars_html}
+                </div>
+
+                <div style="margin-top:8px; font-size:11px; color:#444;">
+                    bins: {", ".join(labels)}
+                </div>
+            </div>
+        </div>
+        """
+
+        prow_wgs = pumps_wgs_reset.geometry.iloc[pid]
+
+        folium.Marker(
+            location=[prow_wgs.y, prow_wgs.x],
+            popup=folium.Popup(popup_html, max_width=360),
+            icon=folium.Icon(color="darkred", icon="tint")
+        ).add_to(pump_group)
+
+    pump_group.add_to(m)
 
     # Sewer
     if show_sewer:
