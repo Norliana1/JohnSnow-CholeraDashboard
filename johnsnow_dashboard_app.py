@@ -32,7 +32,7 @@ OUT_DIR  = Path("Outputs")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # default final html (if you previously generated it)
-FINAL_HTML_PATH = OUT_DIR / "final_cholera_map_polished.html"
+FINAL_HTML_PATH = OUT_DIR / "final_cholera_map.html"
 
 # ---------------- Helpers: load & cache ----------------
 @st.cache_data(show_spinner=False)
@@ -227,7 +227,7 @@ def build_folium_map(deaths_gdf, pumps_gdf, sewer_gdf,
 
 # ---------------- Streamlit UI ----------------
 st.set_page_config(page_title="John Snow — Cholera Dashboard", layout="wide")
-st.title("John Snow 1854 — Cholera Map Dashboard (Advanced)")
+st.title("John Snow 1854 — Cholera Map Dashboard")
 
 st.sidebar.header("Controls & Map Options")
 
